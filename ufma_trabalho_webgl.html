@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Trabalho CG - WebGL (UFMA)</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 12px; }
+    canvas { border:1px solid #444; cursor: crosshair; }
+    #ui { margin-top:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+    button, select { padding:6px 10px }
+    #info { margin-top:8px; font-size:14px }
+  </style>
+</head>
+<body>
+  <h2>Trabalho CG - WebGL (UFMA) — Demo</h2>
+  <canvas id="glcanvas" width="800" height="600"></canvas>
+  <div id="ui">
+    <label>Modo: <select id="mode">
+      <option value="select">Seleção</option>
+      <option value="translate">Translação (arrastar)</option>
+      <option value="rotate">Rotação (arrastar para definir ângulo)</option>
+      <option value="scale">Escala (arrastar vertical)</option>
+      <option value="drawline">Desenhar reta (espelhamento)</option>
+      <option value="mirror">Espelhar sobre reta</option>
+    </select></label>
+    <button id="reset">Reset</button>
+    <button id="download">Salvar como JSON</button>
+    <span id="status"></span>
+  </div>
+  <div id="info">
+    <strong>Instruções:</strong> Clique em "Seleção" e clique em um objeto para selecionar (fica vermelho). Em "Translação" clique e arraste dentro do objeto para mover. Em "Rotação" selecione o objeto e arraste para rotacionar. Em "Escala" selecione e arraste verticalmente para aumentar/reduzir. Para espelhamento: escolha "Desenhar reta", clique duas vezes para definir a reta; depois selecione um objeto e escolha "Espelhar sobre reta". Código em um arquivo HTML (JS embutido) conforme pedido.
+  </div>
+
+<script>
+// WebGL 2D interactive demo in a single HTML file.
+// Objetos: dois polígonos (triângulo + quadrilátero) cada um com um transform (mat3) e cor.
+
+// ---- Utilitários de matriz 3x3 para transformações 2D ----
+function mat3_identity(){ return [1,0,0, 0,1,0, 0,0,1]; }
+// Agora em ordem COLUMN-MAJOR para WebGL
+function mat3_mul(a,b){
+  const r = new Array(9);
+  for(let i=0;i<3;i++){
+    for(let j=0;j<3;j++){
+      r[j*3+i] = a[0*3+i]*b[j*3+0] + a[1*3+i]*b[j*3+1] + a[2*3+i]*b[j*3+2];
+    }
+  }
+  return r;
+}
+function mat3_translate(tx,ty){ return [1,0,0, 0,1,0, tx,ty,1]; }
+function mat3_scale(sx,sy){ return [sx,0,0, 0,sy,0, 0,0,1]; }
+function mat3_rotate(a){ const c=Math.cos(a), s=Math.sin(a); return [c,s,0, -s,c,0, 0,0,1]; }
+
+function applyTransformToPoints(mat, pts){
+  const out=[];
+  for(let i=0;i<pts.length;i+=2){
+    const x=pts[i], y=pts[i+1];
+    const nx = mat[0]*x + mat[3]*y + mat[6];
+    const ny = mat[1]*x + mat[4]*y + mat[7];
+    out.push(nx,ny);
+  }
+  return out;
+}(mat, pts)=>{ // pts: [x,y, x,y,...]
+  const out=[];
+  for(let i=0;i<pts.length;i+=2){
+    const x=pts[i], y=pts[i+1];
+    const nx = mat[0]*x + mat[1]*y + mat[2];
+    const ny = mat[3]*x + mat[4]*y + mat[5];
+    out.push(nx,ny);
+  }
+  return out;
+}
+
+// ---- Setup WebGL ----
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl');
+if(!gl){ alert('WebGL não disponível no navegador'); throw 'no gl'; }
+
+// Simple vertex + fragment shaders, using a 3x3 uniform transform to map model->clip
+const vsSource = `attribute vec2 aPos; uniform mat3 uMat; uniform vec2 uResolution; void main(){ vec3 p = uMat * vec3(aPos,1); // scene coords
+  // convert to clipspace
+  vec2 zeroToOne = (p.xy + vec2(uResolution*0.0))/uResolution; // p assumed in pixel
+  vec2 clip = zeroToOne*2.0 - 1.0; gl_Position = vec4(clip * vec2(1,-1), 0.0, 1.0);} `;
+const fsSource = `precision mediump float; uniform vec4 uColor; void main(){ gl_FragColor = uColor; }`;
+
+function compileShader(src, type){ const s = gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s); if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s); return s; }
+const prog = gl.createProgram(); gl.attachShader(prog, compileShader(vsSource,gl.VERTEX_SHADER)); gl.attachShader(prog, compileShader(fsSource,gl.FRAGMENT_SHADER)); gl.linkProgram(prog); if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) throw gl.getProgramInfoLog(prog);
+gl.useProgram(prog);
+
+const aPos = gl.getAttribLocation(prog,'aPos');
+const uMat = gl.getUniformLocation(prog,'uMat');
+const uRes = gl.getUniformLocation(prog,'uResolution');
+const uColor = gl.getUniformLocation(prog,'uColor');
+
+const vbo = gl.createBuffer();
+
+// ---- Scene objects ----
+let objects = [
+  { // triangle
+    id:1, name:'Triângulo', vertices: [ -80,-40, 0,80, 80,-40 ], color:[0.2,0.7,0.2,1], transform:mat3_identity(), selected:false
+  },
+  { // quadrilátero
+    id:2, name:'Quadrado', vertices: [ -60,-60, -60,60, 60,60, 60,-60 ], color:[0.2,0.4,0.9,1], transform: mat3_translate(220,40), selected:false
+  }
+];
+
+// place both initial shapes in different positions
+objects[0].transform = mat3_translate(200,300); // triangle center
+objects[1].transform = mat3_translate(500,300); // square center
+
+// helper: compute centroid in local coords
+function centroid(verts){ let sx=0, sy=0, n=verts.length/2; for(let i=0;i<verts.length;i+=2){ sx+=verts[i]; sy+=verts[i+1]; } return [sx/n, sy/n]; }
+
+// ---- Picking (color-based offscreen) ----
+// We'll create an offscreen framebuffer and render each object with a unique flat color (id encoded).
+const pickFBO = gl.createFramebuffer(); const pickTex = gl.createTexture();
+function ensurePickBuffer(){ gl.bindTexture(gl.TEXTURE_2D, pickTex); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.canvas.width,gl.canvas.height,0,gl.RGBA,gl.UNSIGNED_BYTE,null); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST); gl.bindFramebuffer(gl.FRAMEBUFFER, pickFBO); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, pickTex, 0); gl.bindFramebuffer(gl.FRAMEBUFFER, null); }
+ensurePickBuffer();
+
+function idToColor(id){ // encode id into color
+  const r = (id & 0xFF) / 255.0;
+  const g = ((id>>8) & 0xFF) / 255.0;
+  const b = ((id>>16) & 0xFF) / 255.0;
+  return [r,g,b,1];
+}
+function colorToId(pix){ return pix[0] + (pix[1]<<8) + (pix[2]<<16); }
+
+function pickAt(x,y){ // canvas coordinates
+  // render to pick FBO
+  ensurePickBuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, pickFBO); gl.viewport(0,0,gl.canvas.width, gl.canvas.height); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo); gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
+  gl.uniform2f(uRes, gl.canvas.width, gl.canvas.height);
+  for(const obj of objects){ gl.uniformMatrix3fv(uMat,false, new Float32Array(obj.transform)); const col = idToColor(obj.id); gl.uniform4fv(uColor, col);
+    // upload vertices
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(obj.vertices), gl.STATIC_DRAW);
+    gl.drawArrays(gl.TRIANGLE_FAN, 0, obj.vertices.length/2);
+  }
+  const px = new Uint8Array(4);
+  // flip y because WebGL's framebuffer origin is bottom-left
+  gl.readPixels(x, gl.canvas.height - y, 1,1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  const id = colorToId(px);
+  if(id===0) return null; return objects.find(o=>o.id===id) || null;
+}
+
+// ---- Rendering to screen ----
+function render(){
+  gl.viewport(0,0,gl.canvas.width,gl.canvas.height);
+  gl.clearColor(0.95,0.95,0.95,1); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
+  gl.uniform2f(uRes, gl.canvas.width, gl.canvas.height);
+
+  for(const obj of objects){
+    gl.uniformMatrix3fv(uMat,false, new Float32Array(obj.transform));
+    const displayColor = obj.selected ? [1,0.15,0.15,1] : obj.color;
+    gl.uniform4fv(uColor, displayColor);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(obj.vertices), gl.STATIC_DRAW);
+    gl.drawArrays(gl.TRIANGLE_FAN, 0, obj.vertices.length/2);
+  }
+
+  // if user drew a mirror line, draw it overlay using 2D canvas
+  drawOverlay();
+}
+
+const overlayCanvas = document.createElement('canvas'); overlayCanvas.width = canvas.width; overlayCanvas.height = canvas.height; overlayCanvas.style.position='absolute'; overlayCanvas.style.left=canvas.offsetLeft+'px'; overlayCanvas.style.top=canvas.offsetTop+'px'; overlayCanvas.style.pointerEvents='none'; document.body.appendChild(overlayCanvas); const octx = overlayCanvas.getContext('2d');
+let mirrorLine = null; // {p1:[x,y], p2:[x,y]}
+function drawOverlay(){ octx.clearRect(0,0,overlayCanvas.width, overlayCanvas.height); if(mirrorLine){ octx.beginPath(); octx.moveTo(mirrorLine.p1[0], mirrorLine.p1[1]); octx.lineTo(mirrorLine.p2[0], mirrorLine.p2[1]); octx.strokeStyle='black'; octx.lineWidth=2; octx.setLineDash([6,4]); octx.stroke(); octx.setLineDash([]); }}
+
+// ---- Interaction state ----
+let modeSelect = document.getElementById('mode'); let mode = modeSelect.value; modeSelect.addEventListener('change', e=>{ mode = e.target.value; status('Modo: '+mode); if(mode!=='drawline') drawLineClicks=[]; });
+let selectedObj = null;
+let mouseDown = false; let lastMouse = [0,0];
+let dragStart = null; let originalTransform = null;
+
+canvas.addEventListener('mousedown', e=>{ const rect = canvas.getBoundingClientRect(); const x = e.clientX - rect.left; const y = e.clientY - rect.top; mouseDown=true; lastMouse=[x,y];
+  if(mode==='select'){ const picked = pickAt(x,y); if(picked){ if(selectedObj) selectedObj.selected=false; selectedObj = picked; selectedObj.selected=true; status('Selecionado: '+selectedObj.name); } else { if(selectedObj) selectedObj.selected=false; selectedObj=null; status('Nada selecionado'); } render(); }
+  else if(mode==='translate' || mode==='rotate' || mode==='scale'){
+    // only start drag if clicked inside selected object
+    const picked = pickAt(x,y);
+    if(picked && selectedObj && picked.id===selectedObj.id){ dragStart=[x,y]; originalTransform = selectedObj.transform.slice(); }
+  } else if(mode==='drawline'){
+    addDrawLineClick(x,y);
+  }else if(mode==='mirror'){
+    mirrorSelectedOverLine();
+  }
+});
+
+canvas.addEventListener('mousemove', e=>{ const rect = canvas.getBoundingClientRect(); const x = e.clientX - rect.left; const y = e.clientY - rect.top; if(mouseDown){ if((mode==='translate' || mode==='rotate' || mode==='scale') && dragStart && selectedObj){ const dx = x - dragStart[0]; const dy = y - dragStart[1]; if(mode==='translate'){ const t = mat3_translate(dx,dy); selectedObj.transform = mat3_mul(t, originalTransform); }
+      else if(mode==='rotate'){ // rotation based on angle between drag start and current relative to object's centroid in screen coords
+        const c = worldToScreen(matApplyToPoint(selectedObj.transform, centroid(selectedObj.vertices)));
+        const a1 = Math.atan2(dragStart[1]-c[1], dragStart[0]-c[0]); const a2 = Math.atan2(y-c[1], x-c[0]); const delta = a2-a1; // apply rotation about centroid
+        const trans1 = mat3_translate(-c[0], -c[1]); const rot = mat3_rotate(delta); const trans2 = mat3_translate(c[0], c[1]); selectedObj.transform = mat3_mul(trans2, mat3_mul(rot, mat3_mul(trans1, originalTransform)));
+      }
+      else if(mode==='scale'){ // vertical drag -> scale factor
+        const c = worldToScreen(matApplyToPoint(selectedObj.transform, centroid(selectedObj.vertices)));
+        const startDist = Math.hypot(dragStart[0]-c[0], dragStart[1]-c[1]); const curDist = Math.hypot(x-c[0], y-c[1]); let s = 1.0; if(startDist>2) s = curDist/startDist; const trans1 = mat3_translate(-c[0], -c[1]); const sc = mat3_scale(s,s); const trans2 = mat3_translate(c[0], c[1]); selectedObj.transform = mat3_mul(trans2, mat3_mul(sc, mat3_mul(trans1, originalTransform)));
+      }
+      render(); }
+  }});
+
+canvas.addEventListener('mouseup', e=>{ mouseDown=false; dragStart=null; originalTransform=null; });
+
+// helpers to convert between spaces
+function matApplyToPoint(mat, p){ // p in model local coords -> world coords
+  const x = mat[0]*p[0] + mat[1]*p[1] + mat[2]; const y = mat[3]*p[0] + mat[4]*p[1] + mat[5]; return [x,y]; }
+function worldToScreen(pt){ // our world coords are in pixels already, so return same
+  return pt.slice(); }
+
+// ---- Drawing mirror line with clicks ----
+let drawLineClicks = [];
+function addDrawLineClick(x,y){ drawLineClicks.push([x,y]); if(drawLineClicks.length===2){ mirrorLine = {p1:drawLineClicks[0], p2:drawLineClicks[1]}; drawLineClicks=[]; status('Reta definida'); render(); } }
+
+// ---- Mirror operation: reflect vertices across line in screen coords ----
+function reflectPointAcrossLine(p, a, b){ // p, a, b = [x,y]
+  // line vector
+  const vx=b[0]-a[0], vy=b[1]-a[1]; const lx2 = vx*vx+vy*vy; if(lx2===0) return p.slice();
+  // project p onto line
+  const t = ((p[0]-a[0])*vx + (p[1]-a[1])*vy) / lx2; const proj = [ a[0] + t*vx, a[1] + t*vy ];
+  // reflected point = proj + (proj - p)
+  return [ proj[0] + (proj[0]-p[0]), proj[1] + (proj[1]-p[1]) ];
+}
+
+function mirrorSelectedOverLine(){ if(!selectedObj) return; if(!mirrorLine) { status('Defina a reta primeiro (modo Desenhar reta)'); return; }
+  // transform each vertex to world coords, reflect, then convert back to local by applying inverse of transform.
+  // For simplicity, we'll compute new transform by reflecting vertex positions in world coords and finding a translation/rotation that maps -- but easier: rebuild object's vertices in world space and set transform to identity then move back.
+  // We'll: compute world-space vertex positions, reflect them, then set object's vertices to those reflected positions and set transform to identity.
+  const ws = applyTransformToPoints(selectedObj.transform, selectedObj.vertices);
+  const reflected = [];
+  for(let i=0;i<ws.length;i+=2){ const rp = reflectPointAcrossLine([ws[i], ws[i+1]], mirrorLine.p1, mirrorLine.p2); reflected.push(rp[0], rp[1]); }
+  // now convert reflected points back to object-local coords by subtracting centroid and setting transform to translate to centroid
+  const cx = reflected.reduce((s,v,i)=> i%2===0? s+v : s,0) / (reflected.length/2);
+  const cy = reflected.reduce((s,v,i)=> i%2===1? s+v : s,0) / (reflected.length/2);
+  const local = [];
+  for(let i=0;i<reflected.length;i+=2){ local.push(reflected[i]-cx, reflected[i+1]-cy); }
+  selectedObj.vertices = local; selectedObj.transform = mat3_translate(cx,cy);
+  render(); status('Objeto espelhado');
+}
+
+// ---- UI controls ----
+document.getElementById('reset').addEventListener('click', ()=>{ objects[0].vertices = [ -80,-40, 0,80, 80,-40 ]; objects[0].transform = mat3_translate(200,300); objects[1].vertices = [ -60,-60, -60,60, 60,60, 60,-60 ]; objects[1].transform = mat3_translate(500,300); selectedObj=null; mirrorLine=null; render(); });
+
+document.getElementById('download').addEventListener('click', ()=>{ const data = JSON.stringify(objects); const blob = new Blob([data], {type:'application/json'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='scene.json'; a.click(); URL.revokeObjectURL(url); });
+
+document.getElementById('mode').addEventListener('change', ()=>{});
+
+// keyboard shortcuts: delete selection, m to mirror
+window.addEventListener('keydown', e=>{ if(e.key==='Delete' && selectedObj){ // remove
+  objects = objects.filter(o=>o!==selectedObj); selectedObj=null; render(); }
+  if(e.key==='m'){ mirrorSelectedOverLine(); }
+});
+
+function status(s){ document.getElementById('status').textContent = s; }
+
+// initial render
+render();
+
+// resize handling
+window.addEventListener('resize', ()=>{ const r = canvas.getBoundingClientRect(); overlayCanvas.style.left = r.left+'px'; overlayCanvas.style.top = r.top+'px'; overlayCanvas.width = canvas.width; overlayCanvas.height = canvas.height; render(); });
+
+</script>
+</body>
+</html>
