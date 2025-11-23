@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Trabalho CG</title>
+  <link rel="stylesheet" href="trabalho_cg.css">
+</head>
+
+<body>
+  <div id="container">
+
+    <h2>Trabalho de Computação Gráfica</h2>
+
+    <canvas id="glcanvas" width="800" height="600"></canvas>
+
+    <div id="ui">
+      <label>Modo:
+        <select id="mode">
+          <option value="select">Seleção</option>
+          <option value="translate">Translação</option>
+          <option value="rotate">Rotação</option>
+          <option value="scale">Escala</option>
+          <option value="drawline">Desenhar reta</option>
+          <option value="mirror">Espelhar</option>
+        </select>
+      </label>
+
+      <button id="reset">Reset</button>
+      <button id="download">Salvar JSON</button>
+      <span id="status"></span>
+    </div>
+
+    <div id="info">
+      <strong>Instruções:</strong> selecione um objeto, aplique transformações e use a reta para espelhamento.
+    </div>
+
+  </div>
+
+  <!-- Bibliotecas do professor -->
+  <script src="../Common/webgl-utils.js"></script>
+  <script src="../Common/initShaders.js"></script>
+  <script src="../Common/MV.js"></script>
+
+  <!-- Shaders -->
+  <script id="vertex-shader" type="x-shader/x-vertex">
+    attribute vec2 aPos;
+    uniform mat4 model;
+    uniform vec2 uResolution;
+
+    void main() {
+      vec4 world = model * vec4(aPos, 0.0, 1.0);
+      vec2 zeroOne = world.xy / uResolution;
+      vec2 clip = zeroOne * 2.0 - 1.0;
+      gl_Position = vec4(clip * vec2(1.0,-1.0), 0.0, 1.0);
+    }
+  </script>
+
+  <script id="fragment-shader" type="x-shader/x-fragment">
+    precision mediump float;
+    uniform vec4 uColor;
+    void main() { gl_FragColor = uColor; }
+  </script>
+
+  <!-- Seu JS separado -->
+  <script src="trabalho_cg.js"></script>
+</body>
+</html>

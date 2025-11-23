@@ -1,0 +1,50 @@
+body {
+    font-family: Arial, Helvetica, sans-serif;
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+
+    background-color: #ffffff;
+}
+
+#container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    position: relative; 
+}
+
+h2 {
+    margin-bottom: 6px;
+}
+
+#glcanvas {
+    border: 2px solid #444;
+    cursor: crosshair;
+    background: white;
+    display: block;
+}
+
+#ui {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+}
+
+button, select {
+    padding: 6px 10px;
+    font-size: 14px;
+}
+
+#info {
+    text-align: center;
+    max-width: 700px;
+    font-size: 14px;
+    color: #444;
+}
