@@ -1,12 +1,10 @@
 /* ============================================================================
-   Trabalho CG - Lógica completa (WebGL + Picking + Transformações + Mirror)
-   Arquivo externo organizado e comentado de forma clara.
+   Trabalho de Compputação Gráfica - 2025.2 - Prof. Darlan Bruno
+   Alunos: Anderson Lopes e João Guilherme
    ============================================================================ */
 
 
-/* ============================================================================
-   1. SETUP DO WEBGL
-   ============================================================================ */
+// Montando o WebGL
 const canvas = document.getElementById("glcanvas");
 let gl = WebGLUtils.setupWebGL(canvas);
 if (!gl) alert("WebGL não disponível.");
@@ -14,7 +12,7 @@ if (!gl) alert("WebGL não disponível.");
 let program = initShaders(gl, "vertex-shader", "fragment-shader");
 gl.useProgram(program);
 
-// Uniforms e atributo
+// Atributos
 const aPos = gl.getAttribLocation(program, "aPos");
 const modelLoc = gl.getUniformLocation(program, "model");
 const uRes = gl.getUniformLocation(program, "uResolution");
@@ -23,10 +21,7 @@ const uColor = gl.getUniformLocation(program, "uColor");
 // Buffer para os vértices
 const vbo = gl.createBuffer();
 
-
-/* ============================================================================
-   2. OBJETOS DA CENA (formato padrão do professor: vertices = vec2)
-   ============================================================================ */
+// OBJETOS DA CENA
 let objects = [
   {
     id: 1,
@@ -46,9 +41,7 @@ let objects = [
   }
 ];
 
-/* ============================================================================
-   2.1 OVERLAY DA RETA 
-   ============================================================================ */
+// Desenho da reta para espelhamento
 
 const overlayCanvas = document.createElement("canvas");
 overlayCanvas.width = canvas.width;
@@ -81,11 +74,9 @@ function drawOverlay() {
     octx.setLineDash([]);
 }
 
-/* ============================================================================
-   3. FUNÇÕES DE MATRIZ / COORDENADAS
-   ============================================================================ */
+// Funções de tratamento das coordenadas
 
-// Clona mat4 preservando o "flag" interno de matriz
+// Clona mat4 preservando a flag interno de matriz
 function cloneMat4(M) {
   let r = [];
   for (let i = 0; i < 4; i++) r.push(vec4(M[i]));
@@ -120,9 +111,7 @@ function centroid(verts) {
 }
 
 
-/* ============================================================================
-   4. SISTEMA DE PICKING (via FBO + cor)
-   ============================================================================ */
+// 1. Operação de seleção
 const pickFBO = gl.createFramebuffer();
 const pickTex = gl.createTexture();
 
@@ -187,12 +176,10 @@ function pickAt(x,y) {
 }
 
 
-/* ============================================================================
-   5. ESPELHAMENTO
-   ============================================================================ */
+// 2. Operação de espelhamento
 let mirrorLine = null;
 
-// Reflete um ponto em relação à reta AB
+// Reflete um ponto em relação a reta AB
 function reflectPointAcrossLine(p, a, b) {
   let vx = b[0] - a[0], vy = b[1] - a[1];
   let L2 = vx*vx + vy*vy;
@@ -223,35 +210,7 @@ function mirrorSelectedOverLine() {
   render();
 }
 
-
-/* ============================================================================
-   6. RENDERIZAÇÃO PRINCIPAL
-   ============================================================================ */
-function render() {
-  gl.viewport(0,0,canvas.width,canvas.height);
-  gl.clearColor(0.95,0.95,0.95,1);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-
-  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-  gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
-  gl.enableVertexAttribArray(aPos);
-
-  gl.uniform2f(uRes, canvas.width, canvas.height);
-
-  for (let obj of objects) {
-    let col = obj.selected ? vec4(1,0.2,0.2,1) : obj.color;
-    gl.uniform4fv(uColor, col);
-    gl.uniformMatrix4fv(modelLoc, false, flatten(obj.transform));
-    gl.bufferData(gl.ARRAY_BUFFER, flatten(obj.vertices), gl.STATIC_DRAW);
-    gl.drawArrays(gl.TRIANGLE_FAN, 0, obj.vertices.length);
-  }
-  drawOverlay();
-}
-
-
-/* ============================================================================
-   7. INTERAÇÃO DO MOUSE (TRANSFORMAÇÕES)
-   ============================================================================ */
+// 3. Interações das transformações usando o mouse
 
 let mode = document.getElementById("mode").value;
 let selectedObj = null;
@@ -271,7 +230,6 @@ canvas.addEventListener("mousedown", e => {
 
   mouseDown = true;
 
-  // SELEÇÃO
   if (mode === "select") {
     let p = pickAt(x,y);
 
@@ -283,7 +241,7 @@ canvas.addEventListener("mousedown", e => {
     return;
   }
 
-  // INÍCIO DE TRANSFORMAÇÃO
+  // Garante que o clique foi no mesmo objeto que já está selecionado
   if (["translate","rotate","scale"].includes(mode)) {
     let p = pickAt(x,y);
     if (p && selectedObj && p.id === selectedObj.id) {
@@ -292,7 +250,6 @@ canvas.addEventListener("mousedown", e => {
     }
   }
 
-  // DESENHO DA RETA
   if (mode === "drawline") {
     if (!mirrorLine || (mirrorLine.p1 && mirrorLine.p2)) {
         mirrorLine = { p1: [x,y], p2: null };
@@ -306,8 +263,6 @@ canvas.addEventListener("mousedown", e => {
     }
 }
 
-
-  // ESPELHAMENTO
   if (mode === "mirror") {
     mirrorSelectedOverLine();
   }
@@ -367,9 +322,7 @@ canvas.addEventListener("mouseup", ()=>{
 });
 
 
-/* ============================================================================
-   8. BOTÃO RESET
-   ============================================================================ */
+// 5. Resetar pro estado incial da cena
 document.getElementById("reset").addEventListener("click", ()=>{
 
   objects[0].vertices = [
@@ -390,23 +343,26 @@ document.getElementById("reset").addEventListener("click", ()=>{
   render();
 });
 
+// 6. Renderização
+function render() {
+  gl.viewport(0,0,canvas.width,canvas.height);
+  gl.clearColor(0.95,0.95,0.95,1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
 
-/* ============================================================================
-   9. DOWNLOAD JSON
-   ============================================================================ */
-document.getElementById("download").addEventListener("click", () => {
-  const data = JSON.stringify(objects);
-  const blob = new Blob([data], {type:"application/json"});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "scene.json";
-  a.click();
-  URL.revokeObjectURL(url);
-});
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
+  gl.enableVertexAttribArray(aPos);
 
+  gl.uniform2f(uRes, canvas.width, canvas.height);
 
-/* ============================================================================
-   10. INICIALIZAÇÃO
-   ============================================================================ */
+  for (let obj of objects) {
+    let col = obj.selected ? vec4(1,0.2,0.2,1) : obj.color;
+    gl.uniform4fv(uColor, col);
+    gl.uniformMatrix4fv(modelLoc, false, flatten(obj.transform));
+    gl.bufferData(gl.ARRAY_BUFFER, flatten(obj.vertices), gl.STATIC_DRAW);
+    gl.drawArrays(gl.TRIANGLE_FAN, 0, obj.vertices.length);
+  }
+  drawOverlay();
+}
+
 render();
