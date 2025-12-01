@@ -17,9 +17,7 @@ const aPos = gl.getAttribLocation(program, "aPos");
 const modelLoc = gl.getUniformLocation(program, "model");
 const uRes = gl.getUniformLocation(program, "uResolution");
 const uColor = gl.getUniformLocation(program, "uColor");
-
-// Buffer para os vértices
-const vbo = gl.createBuffer();
+const vBuffer = gl.createBuffer();
 
 // OBJETOS DA CENA
 let objects = [
@@ -41,41 +39,7 @@ let objects = [
   }
 ];
 
-// Desenho da reta para espelhamento
-
-const overlayCanvas = document.createElement("canvas");
-overlayCanvas.width = canvas.width;
-overlayCanvas.height = canvas.height;
-
-overlayCanvas.style.position = "absolute";
-overlayCanvas.style.left = canvas.offsetLeft + "px";
-overlayCanvas.style.top = canvas.offsetTop + "px";
-overlayCanvas.style.pointerEvents = "none";
-
-document.getElementById("container").appendChild(overlayCanvas);
-
-const octx = overlayCanvas.getContext("2d");
-
-function drawOverlay() {
-    overlayCanvas.style.left = canvas.offsetLeft + "px";
-    overlayCanvas.style.top = canvas.offsetTop + "px";
-    
-    octx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-
-    if (!mirrorLine || !mirrorLine.p1 || !mirrorLine.p2) return;
-
-    octx.beginPath();
-    octx.moveTo(mirrorLine.p1[0], mirrorLine.p1[1]);
-    octx.lineTo(mirrorLine.p2[0], mirrorLine.p2[1]);
-    octx.strokeStyle = "black";
-    octx.lineWidth = 2;
-    octx.setLineDash([6,4]);
-    octx.stroke();
-    octx.setLineDash([]);
-}
-
 // Funções de tratamento das coordenadas
-
 // Clona mat4 preservando a flag interno de matriz
 function cloneMat4(M) {
   let r = [];
@@ -111,11 +75,11 @@ function centroid(verts) {
 }
 
 
-// 1. Operação de seleção
-const pickFBO = gl.createFramebuffer();
+// Operação de seleção
+const pickFB = gl.createFramebuffer();
 const pickTex = gl.createTexture();
 
-function ensurePickBuffer() {
+function pickBuffer() {
   gl.bindTexture(gl.TEXTURE_2D, pickTex);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA,
     canvas.width, canvas.height,
@@ -124,13 +88,13 @@ function ensurePickBuffer() {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
-  gl.bindFramebuffer(gl.FRAMEBUFFER, pickFBO);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pickFB);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0,
                           gl.TEXTURE_2D, pickTex, 0);
 
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 }
-ensurePickBuffer();
+pickBuffer();
 
 function idToColor(id) {
   return vec4(
@@ -145,15 +109,15 @@ function colorToId(px) {
   return px[0] + (px[1]<<8) + (px[2]<<16);
 }
 
-function pickAt(x,y) {
-  ensurePickBuffer();
+function pick(x,y) {
+  pickBuffer();
 
-  gl.bindFramebuffer(gl.FRAMEBUFFER, pickFBO);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pickFB);
   gl.viewport(0,0,canvas.width,canvas.height);
   gl.clearColor(0,0,0,1);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bindBuffer(gl.ARRAY_BUFFER, vBuffer);
   gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
   gl.enableVertexAttribArray(aPos);
   gl.uniform2f(uRes, canvas.width, canvas.height);
@@ -175,11 +139,41 @@ function pickAt(x,y) {
   return objects.find(o => o.id === id) || null;
 }
 
+// Operação de espelhamento
+const overlayCanvas = document.createElement("canvas");
+overlayCanvas.width = canvas.width;
+overlayCanvas.height = canvas.height;
 
-// 2. Operação de espelhamento
-let mirrorLine = null;
+overlayCanvas.style.position = "absolute";
+overlayCanvas.style.left = canvas.offsetLeft + "px";
+overlayCanvas.style.top = canvas.offsetTop + "px";
+overlayCanvas.style.pointerEvents = "none";
+
+document.getElementById("container").appendChild(overlayCanvas);
+
+const octx = overlayCanvas.getContext("2d");
+
+function drawOverlay() {
+  overlayCanvas.style.left = canvas.offsetLeft + "px";
+  overlayCanvas.style.top = canvas.offsetTop + "px";
+  
+  octx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  
+  if (!mirrorLine || !mirrorLine.p1 || !mirrorLine.p2) return;
+
+  octx.beginPath();
+  octx.moveTo(mirrorLine.p1[0], mirrorLine.p1[1]);
+  octx.lineTo(mirrorLine.p2[0], mirrorLine.p2[1]);
+  octx.strokeStyle = "black";
+  octx.lineWidth = 2;
+  octx.setLineDash([6,4]);
+  octx.stroke();
+  octx.setLineDash([]);
+}
 
 // Reflete um ponto em relação a reta AB
+let mirrorLine = null;
+
 function reflectPointAcrossLine(p, a, b) {
   let vx = b[0] - a[0], vy = b[1] - a[1];
   let L2 = vx*vx + vy*vy;
@@ -210,8 +204,7 @@ function mirrorSelectedOverLine() {
   render();
 }
 
-// 3. Interações das transformações usando o mouse
-
+// Interações das transformações usando o mouse
 let mode = document.getElementById("mode").value;
 let selectedObj = null;
 
@@ -231,7 +224,7 @@ canvas.addEventListener("mousedown", e => {
   mouseDown = true;
 
   if (mode === "select") {
-    let p = pickAt(x,y);
+    let p = pick(x,y);
 
     objects.forEach(o => o.selected = false);
     if (p) p.selected = true;
@@ -243,7 +236,7 @@ canvas.addEventListener("mousedown", e => {
 
   // Garante que o clique foi no mesmo objeto que já está selecionado
   if (["translate","rotate","scale"].includes(mode)) {
-    let p = pickAt(x,y);
+    let p = pick(x,y);
     if (p && selectedObj && p.id === selectedObj.id) {
       dragStart = [x,y];
       originalTransform = cloneMat4(selectedObj.transform);
@@ -322,7 +315,7 @@ canvas.addEventListener("mouseup", ()=>{
 });
 
 
-// 5. Resetar pro estado incial da cena
+// Resetar pro estado incial da cena
 document.getElementById("reset").addEventListener("click", ()=>{
 
   objects[0].vertices = [
@@ -343,13 +336,13 @@ document.getElementById("reset").addEventListener("click", ()=>{
   render();
 });
 
-// 6. Renderização
+// Renderização
 function render() {
   gl.viewport(0,0,canvas.width,canvas.height);
   gl.clearColor(0.95,0.95,0.95,1);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bindBuffer(gl.ARRAY_BUFFER, vBuffer);
   gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
   gl.enableVertexAttribArray(aPos);
 
